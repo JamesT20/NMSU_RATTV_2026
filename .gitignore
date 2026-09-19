@@ -1,0 +1,62 @@
+### Python ###
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+
+### C++ / CMake ###
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.hex
+*.elf
+*.bin
+
+### Embedded / PlatformIO ###
+.pio/
+.pioenvs/
+.clangd/
+
+### IDEs and local tooling ###
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.user
+*.suo
+*.swp
+*.swo
+
+### OS files ###
+.DS_Store
+Thumbs.db
+Desktop.ini
