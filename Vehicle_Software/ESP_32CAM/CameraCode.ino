@@ -5,8 +5,8 @@
 // =====================
 // Wi-Fi
 // =====================
-const char* ssid = "NMSU_IAM3D";
-const char* password = "nmsuasme";
+const char* ssid      = "NMSU_IAM3D";
+const char* password  = "nmsuasme";
 
 // =====================
 // AI-Thinker ESP32-CAM
@@ -31,6 +31,89 @@ const char* password = "nmsuasme";
 
 WebServer server(80);
 
+const framesize_t streamSizes[] = {
+  FRAMESIZE_QQVGA,
+  FRAMESIZE_QVGA,
+  FRAMESIZE_VGA
+};
+const int streamSizeCount = sizeof(streamSizes) / sizeof(streamSizes[0]);
+int currentStreamSize = 1;
+int maxStreamSize = 1;
+const int baseJpegQuality = 12;
+const int maxJpegQuality = 24;
+const int jpegQualityStep = 3;
+int currentJpegQuality = baseJpegQuality;
+uint32_t windowSendTimeMs = 0;
+uint8_t windowFrameCount = 0;
+uint8_t slowWindows = 0;
+uint8_t fastWindows = 0;
+unsigned long lastWifiReconnectAttempt = 0;
+const unsigned long wifiReconnectIntervalMs = 5000;
+
+void updateStreamResolution(uint32_t sendTimeMs) {
+  windowSendTimeMs += sendTimeMs;
+  windowFrameCount++;
+
+  if (windowFrameCount < 10) {
+    return;
+  }
+
+  uint32_t averageSendTimeMs = windowSendTimeMs / windowFrameCount;
+  windowSendTimeMs = 0;
+  windowFrameCount = 0;
+
+  if (averageSendTimeMs > 150) {
+    slowWindows++;
+    fastWindows = 0;
+  } else if (averageSendTimeMs < 60) {
+    fastWindows++;
+    slowWindows = 0;
+  } else {
+    slowWindows = 0;
+    fastWindows = 0;
+  }
+
+  int targetSize = currentStreamSize;
+  int targetQuality = currentJpegQuality;
+  if (slowWindows >= 2) {
+    if (currentJpegQuality < maxJpegQuality) {
+      targetQuality = min(currentJpegQuality + jpegQualityStep, maxJpegQuality);
+    } else if (currentStreamSize > 0) {
+      targetSize--;
+    }
+  } else if (fastWindows >= 4) {
+    if (currentJpegQuality > baseJpegQuality) {
+      targetQuality = max(currentJpegQuality - jpegQualityStep, baseJpegQuality);
+    } else if (currentStreamSize < maxStreamSize) {
+      targetSize++;
+    }
+  }
+
+  if (targetSize == currentStreamSize && targetQuality == currentJpegQuality) {
+    return;
+  }
+
+  sensor_t *sensor = esp_camera_sensor_get();
+  if (!sensor) {
+    Serial.println("Failed to change stream resolution");
+  } else if (targetQuality != currentJpegQuality &&
+             sensor->set_quality(sensor, targetQuality) == 0) {
+    currentJpegQuality = targetQuality;
+    Serial.printf("JPEG quality changed to %d (avg send %lu ms)\n",
+                  currentJpegQuality, (unsigned long)averageSendTimeMs);
+  } else if (targetSize != currentStreamSize &&
+             sensor->set_framesize(sensor, streamSizes[targetSize]) == 0) {
+    currentStreamSize = targetSize;
+    Serial.printf("Stream resolution changed to index %d (avg send %lu ms)\n",
+                  currentStreamSize, (unsigned long)averageSendTimeMs);
+  } else {
+    Serial.println("Failed to update stream quality or resolution");
+  }
+
+  slowWindows = 0;
+  fastWindows = 0;
+}
+
 // =====================
 // Video stream
 // =====================
@@ -45,7 +128,7 @@ void handleStream() {
     "\r\n"
   );
 
-  while (client.connected()) {
+  while (client.connected() && WiFi.status() == WL_CONNECTED) {
 
     camera_fb_t *fb = esp_camera_fb_get();
 
@@ -55,16 +138,26 @@ void handleStream() {
       continue;
     }
 
+    unsigned long sendStarted = millis();
+
     client.print("--frame\r\n");
     client.print("Content-Type: image/jpeg\r\n");
     client.print("Content-Length: ");
     client.print(fb->len);
     client.print("\r\n\r\n");
 
-    client.write(fb->buf, fb->len);
+    size_t frameLength = fb->len;
+    size_t sent = client.write(fb->buf, frameLength);
     client.print("\r\n");
 
     esp_camera_fb_return(fb);
+
+    if (sent != frameLength) {
+      Serial.println("Incomplete frame write; ending stream");
+      break;
+    }
+
+    updateStreamResolution(millis() - sendStarted);
 
     delay(30);
   }
@@ -86,7 +179,12 @@ void handleRoot() {
     "</head>"
     "<body style='text-align:center;font-family:Arial;'>"
     "<h2>ESP32-CAM Live Video</h2>"
-    "<img src='/stream' style='max-width:100%;'>"
+    "<img id='video' src='/stream' style='max-width:100%;'>"
+    "<script>"
+    "const video=document.getElementById('video');"
+    "let retryTimer;"
+    "video.onerror=()=>{clearTimeout(retryTimer);retryTimer=setTimeout(()=>{video.src='/stream?retry='+Date.now();},1000);};"
+    "</script>"
     "</body>"
     "</html>";
 
@@ -103,6 +201,8 @@ void setup() {
 
   Serial.println();
   Serial.println("=== ESP32-CAM STREAM ===");
+
+  maxStreamSize = psramFound() ? streamSizeCount - 1 : 1;
 
   // ---------------------
   // Camera configuration
@@ -136,9 +236,9 @@ void setup() {
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  // Start small and reliable
-  config.frame_size   = FRAMESIZE_QVGA;   // 320x240
-  config.jpeg_quality = 12;
+  // Allocate frame buffers for the largest adaptive resolution.
+  config.frame_size   = streamSizes[maxStreamSize];
+  config.jpeg_quality = baseJpegQuality;
   config.fb_count     = 1;
 
   // ---------------------
@@ -156,11 +256,23 @@ void setup() {
 
   Serial.println("Camera OK");
 
+  sensor_t *sensor = esp_camera_sensor_get();
+  if (sensor && sensor->set_framesize(sensor, streamSizes[currentStreamSize]) == 0) {
+    Serial.println("Starting stream at QVGA");
+  } else {
+    currentStreamSize = maxStreamSize;
+    Serial.println("Could not set startup resolution; using maximum mode");
+  }
+
+  Serial.printf("Adaptive stream range: QQVGA to %s\n",
+                maxStreamSize == streamSizeCount - 1 ? "VGA" : "QVGA");
+
   // ---------------------
   // Connect Wi-Fi
   // ---------------------
 
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
 
   Serial.print("Connecting to WiFi");
@@ -199,5 +311,13 @@ void setup() {
 // =====================
 void loop() {
   server.handleClient();
+
+  if (WiFi.status() != WL_CONNECTED &&
+      millis() - lastWifiReconnectAttempt >= wifiReconnectIntervalMs) {
+    lastWifiReconnectAttempt = millis();
+    Serial.println("WiFi disconnected; attempting reconnection");
+    WiFi.reconnect();
+  }
+
   delay(1);
 }
