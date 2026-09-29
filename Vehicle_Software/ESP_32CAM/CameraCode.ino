@@ -2,15 +2,11 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
-// =====================
 // Wi-Fi
-// =====================
 const char* ssid      = "NMSU_IAM3D";
 const char* password  = "nmsuasme";
 
-// =====================
 // AI-Thinker ESP32-CAM
-// =====================
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
@@ -31,33 +27,38 @@ const char* password  = "nmsuasme";
 
 WebServer server(80);
 
-const framesize_t streamSizes[] = {
-  FRAMESIZE_QQVGA,
-  FRAMESIZE_QVGA,
-  FRAMESIZE_VGA
-};
+const framesize_t streamSizes[] = {FRAMESIZE_QQVGA,FRAMESIZE_QVGA,FRAMESIZE_VGA};
+
+// steaming constants
 const int streamSizeCount = sizeof(streamSizes) / sizeof(streamSizes[0]);
-int currentStreamSize = 1;
-int maxStreamSize = 1;
+int currentStreamSize     = 1;
+int maxStreamSize         = 1;
 const int baseJpegQuality = 12;
-const int maxJpegQuality = 24;
+const int maxJpegQuality  = 24;
 const int jpegQualityStep = 3;
-int currentJpegQuality = baseJpegQuality;
+int currentJpegQuality    = baseJpegQuality;
 uint32_t windowSendTimeMs = 0;
-uint8_t windowFrameCount = 0;
+uint8_t windowFrameCount  = 0;
+
+// adaptive streaming state
 uint8_t slowWindows = 0;
 uint8_t fastWindows = 0;
-unsigned long lastWifiReconnectAttempt = 0;
+
+// wifi reconnect constants
+unsigned long lastWifiReconnectAttempt      = 0;
 const unsigned long wifiReconnectIntervalMs = 5000;
 
+// function to update the stream resolution based on the average send time of the last 10 frames
 void updateStreamResolution(uint32_t sendTimeMs) {
   windowSendTimeMs += sendTimeMs;
   windowFrameCount++;
 
+  // Only update the stream resolution after 10 frames have been sent
   if (windowFrameCount < 10) {
     return;
-  }
+  } // end if (windowFrameCount < 10)
 
+  // Calculate the average send time for the last 10 frames and determine if the stream is too slow or too fast
   uint32_t averageSendTimeMs = windowSendTimeMs / windowFrameCount;
   windowSendTimeMs = 0;
   windowFrameCount = 0;
@@ -71,28 +72,33 @@ void updateStreamResolution(uint32_t sendTimeMs) {
   } else {
     slowWindows = 0;
     fastWindows = 0;
-  }
+  } // end if (averageSendTimeMs > 150)
 
-  int targetSize = currentStreamSize;
+  int targetSize    = currentStreamSize;
   int targetQuality = currentJpegQuality;
+
+  // Adjust the stream resolution and JPEG quality based on the average send time
   if (slowWindows >= 2) {
     if (currentJpegQuality < maxJpegQuality) {
       targetQuality = min(currentJpegQuality + jpegQualityStep, maxJpegQuality);
     } else if (currentStreamSize > 0) {
       targetSize--;
-    }
+    } // end if (currentJpegQuality < maxJpegQuality)
   } else if (fastWindows >= 4) {
     if (currentJpegQuality > baseJpegQuality) {
       targetQuality = max(currentJpegQuality - jpegQualityStep, baseJpegQuality);
     } else if (currentStreamSize < maxStreamSize) {
       targetSize++;
-    }
-  }
+    } // end if (currentStreamSize < maxStreamSize)
+  } // end if (slowWindows >= 2)
 
+
+  // If the target size and quality are the same as the current size and quality, do nothing
   if (targetSize == currentStreamSize && targetQuality == currentJpegQuality) {
     return;
-  }
+  } // end if (targetSize == currentStreamSize && targetQuality == currentJpegQuality)
 
+  // Get the camera sensor and update the stream resolution and JPEG quality
   sensor_t *sensor = esp_camera_sensor_get();
   if (!sensor) {
     Serial.println("Failed to change stream resolution");
@@ -108,15 +114,13 @@ void updateStreamResolution(uint32_t sendTimeMs) {
                   currentStreamSize, (unsigned long)averageSendTimeMs);
   } else {
     Serial.println("Failed to update stream quality or resolution");
-  }
+  }// end if (!sensor)
 
   slowWindows = 0;
   fastWindows = 0;
-}
+} // end void updateStreamResolution(uint32_t sendTimeMs)
 
-// =====================
 // Video stream
-// =====================
 void handleStream() {
 
   WiFiClient client = server.client();
@@ -136,7 +140,7 @@ void handleStream() {
       Serial.println("Camera capture failed");
       delay(100);
       continue;
-    }
+    } // end if (!fb)
 
     unsigned long sendStarted = millis();
 
@@ -155,19 +159,17 @@ void handleStream() {
     if (sent != frameLength) {
       Serial.println("Incomplete frame write; ending stream");
       break;
-    }
+    } // end if (sent != frameLength)
 
     updateStreamResolution(millis() - sendStarted);
 
     delay(30);
-  }
+  } // end while (client.connected() && WiFi.status() == WL_CONNECTED)
 
   Serial.println("Stream client disconnected");
-}
+} // end void handleStream()
 
-// =====================
 // Main webpage
-// =====================
 void handleRoot() {
 
   String page =
@@ -189,11 +191,9 @@ void handleRoot() {
     "</html>";
 
   server.send(200, "text/html", page);
-}
+} // end void handleRoot()
 
-// =====================
 // Setup
-// =====================
 void setup() {
 
   Serial.begin(115200);
@@ -206,8 +206,6 @@ void setup() {
 
   // ---------------------
   // Camera configuration
-  // ---------------------
-
   camera_config_t config = {};
 
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -241,10 +239,7 @@ void setup() {
   config.jpeg_quality = baseJpegQuality;
   config.fb_count     = 1;
 
-  // ---------------------
   // Start camera
-  // ---------------------
-
   Serial.println("Starting camera...");
 
   esp_err_t err = esp_camera_init(&config);
@@ -252,7 +247,7 @@ void setup() {
   if (err != ESP_OK) {
     Serial.printf("Camera FAILED: 0x%X\n", err);
     return;
-  }
+  } // end if (err != ESP_OK)
 
   Serial.println("Camera OK");
 
@@ -262,15 +257,11 @@ void setup() {
   } else {
     currentStreamSize = maxStreamSize;
     Serial.println("Could not set startup resolution; using maximum mode");
-  }
+  } // end if (sensor && sensor->set_framesize(sensor, streamSizes[currentStreamSize]) == 0)
 
-  Serial.printf("Adaptive stream range: QQVGA to %s\n",
-                maxStreamSize == streamSizeCount - 1 ? "VGA" : "QVGA");
+  Serial.printf("Adaptive stream range: QQVGA to %s\n",maxStreamSize == streamSizeCount - 1 ? "VGA" : "QVGA");
 
-  // ---------------------
   // Connect Wi-Fi
-  // ---------------------
-
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
@@ -280,15 +271,13 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
-  }
+  } // end while (WiFi.status() != WL_CONNECTED)
 
   Serial.println();
   Serial.println("WiFi connected");
 
-  // ---------------------
-  // Web server
-  // ---------------------
 
+  // Web server
   server.on("/", HTTP_GET, handleRoot);
   server.on("/stream", HTTP_GET, handleStream);
 
@@ -304,11 +293,9 @@ void setup() {
   Serial.print("Direct stream:   http://");
   Serial.print(WiFi.localIP());
   Serial.println("/stream");
-}
+} // end void setup()
 
-// =====================
 // Loop
-// =====================
 void loop() {
   server.handleClient();
 
@@ -320,4 +307,4 @@ void loop() {
   }
 
   delay(1);
-}
+} // end void loop()
