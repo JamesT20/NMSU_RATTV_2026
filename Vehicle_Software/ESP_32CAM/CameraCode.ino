@@ -102,16 +102,12 @@ void updateStreamResolution(uint32_t sendTimeMs) {
   sensor_t *sensor = esp_camera_sensor_get();
   if (!sensor) {
     Serial.println("Failed to change stream resolution");
-  } else if (targetQuality != currentJpegQuality &&
-             sensor->set_quality(sensor, targetQuality) == 0) {
+  } else if (targetQuality != currentJpegQuality && sensor->set_quality(sensor, targetQuality) == 0) {
     currentJpegQuality = targetQuality;
-    Serial.printf("JPEG quality changed to %d (avg send %lu ms)\n",
-                  currentJpegQuality, (unsigned long)averageSendTimeMs);
-  } else if (targetSize != currentStreamSize &&
-             sensor->set_framesize(sensor, streamSizes[targetSize]) == 0) {
+    Serial.printf("JPEG quality changed to %d (avg send %lu ms)\n",currentJpegQuality, (unsigned long)averageSendTimeMs);
+  } else if (targetSize != currentStreamSize && sensor->set_framesize(sensor, streamSizes[targetSize]) == 0) {
     currentStreamSize = targetSize;
-    Serial.printf("Stream resolution changed to index %d (avg send %lu ms)\n",
-                  currentStreamSize, (unsigned long)averageSendTimeMs);
+    Serial.printf("Stream resolution changed to index %d (avg send %lu ms)\n", currentStreamSize, (unsigned long)averageSendTimeMs);
   } else {
     Serial.println("Failed to update stream quality or resolution");
   }// end if (!sensor)
